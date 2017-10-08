@@ -11,6 +11,7 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "devices/timer.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -36,6 +37,9 @@ static struct thread *initial_thread;
 
 /* Lock used by allocate_tid(). */
 static struct lock tid_lock;
+
+/* List of sleeping threads */
+static struct list sleep_list;
 
 /* Stack frame for kernel_thread(). */
 struct kernel_thread_frame 
@@ -92,6 +96,7 @@ thread_init (void)
   lock_init (&tid_lock);
   list_init (&ready_list);
   list_init (&all_list);
+  list_init (&sleep_list);
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -239,15 +244,15 @@ thread_block (void)
 void
 thread_unblock (struct thread *t) 
 {
-  enum intr_level old_level;
+  // enum intr_level old_level;
 
   ASSERT (is_thread (t));
 
-  old_level = intr_disable ();
+  // old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
   list_push_back (&ready_list, &t->elem);
   t->status = THREAD_READY;
-  intr_set_level (old_level);
+  // intr_set_level (old_level);
 }
 
 /* Returns the name of the running thread. */
@@ -327,15 +332,31 @@ thread_yield (void)
 void
 thread_foreach (thread_action_func *func, void *aux)
 {
-  struct list_elem *e;
+    struct list_elem *elem_curr,*elem_next;
+    struct thread *t;
+    enum intr_level old_interrupt_level;
 
-  ASSERT (intr_get_level () == INTR_OFF);
+    ASSERT (intr_get_level () == INTR_OFF);
 
-  for (e = list_begin (&all_list); e != list_end (&all_list);
-       e = list_next (e))
+    for (elem_curr = list_begin (&sleep_list);elem_curr != list_end (&sleep_list);)
     {
-      struct thread *t = list_entry (e, struct thread, allelem);
-      func (t, aux);
+        elem_next = list_next (elem_curr);
+        t = list_entry (elem_curr, struct thread, elem);
+
+        ASSERT (is_thread (t));
+
+        if (t->ticks_sleep > timer_ticks()) // the condition always holds good because the queue is in sorted order.
+            break;
+
+        old_interrupt_level = intr_disable (); // temporarily turn OFF the interrupt untill the thread is unblocked.
+
+        list_remove (elem_curr); // remove the thread from the sleep queue
+
+        func (t, aux); // unblock thread
+
+        intr_set_level (old_interrupt_level); // reset the interrupt level back to its old.
+
+        elem_curr = elem_next;
     }
 }
 
@@ -585,3 +606,71 @@ allocate_tid (void)
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
+
+/*
+ * Name: thread_sleep
+ *
+ * Description: Put the calling thread in suspended state for ticks time
+ *
+ */
+void thread_sleep (int64_t ticks){
+
+    enum intr_level old_interrupt_level;
+
+    struct thread *current_thread = thread_current (); // get the current/calling thread addres
+
+    ASSERT (is_thread (current_thread));
+
+    current_thread->ticks_sleep = ticks + timer_ticks(); // timer_ticks(); returns the no.of timer-ticks,since OS boot
+
+    old_interrupt_level = intr_disable(); // temporarily turn OFF the interrupt untill the thread is blocked.
+
+    /* list_insert_ordered() function is used to insert a current-thread into the sleep_list in ascending order, current
+       thread element is iterated over the sleep_list till a suitable insert palce is found  */
+    list_insert_ordered(&sleep_list, &current_thread->elem, (list_less_func *) &compare_ticks, NULL);
+
+    thread_block(); // block the thread
+
+    intr_set_level(old_interrupt_level); // reset the interrupt level back to its old.
+}
+
+/*
+ * Name: compare_ticks
+ *
+ * Description: This function is used compare thread's ticks_sleep values.
+ *
+ */
+bool compare_ticks (const struct list_elem *a,const struct list_elem *b,void *aux)
+{
+    struct thread *thread_a, *thread_b ;
+    thread_a = list_entry(a, struct thread, elem);
+    thread_b = list_entry(b, struct thread, elem);
+
+    return ((thread_a->ticks_sleep < thread_b->ticks_sleep)? true : false) ;
+}
+
+/*
+ * Name: thread_dequeue
+ *
+ * Description: This function is used to check whether a thread is to be dequeued from the sleep_list
+ * based on the condition if{curr_sleep_ticks <= timer_ticks()}
+ */
+void thread_dequeue (void)
+{
+    if (list_empty (&sleep_list)) // check if the sleep_list is empty
+        return;
+
+    thread_foreach(&thread_awake,NULL); // iterate along the sleep_list to dequeue threads if{curr_sleep_ticks <= timer_ticks()}
+}
+
+/*
+ * Name: thread_awake
+ *
+ * Description: This function is used to unblock a thread (putting back into the ready queue)
+ *
+ */
+void thread_awake (struct thread *t, void *aux){
+
+    thread_unblock (t);  // unblock the thread & put back into ready queue
+
+}
