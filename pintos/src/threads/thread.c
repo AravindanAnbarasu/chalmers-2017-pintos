@@ -334,7 +334,6 @@ thread_foreach (thread_action_func *func, void *aux)
 {
     struct list_elem *elem_curr,*elem_next;
     struct thread *t;
-    enum intr_level old_interrupt_level;
 
     ASSERT (intr_get_level () == INTR_OFF);
 
@@ -348,13 +347,9 @@ thread_foreach (thread_action_func *func, void *aux)
         if (t->ticks_sleep > timer_ticks()) // the condition always holds good because the queue is in sorted order.
             break;
 
-        old_interrupt_level = intr_disable (); // temporarily turn OFF the interrupt untill the thread is unblocked.
-
         list_remove (elem_curr); // remove the thread from the sleep queue
 
         func (t, aux); // unblock thread
-
-        intr_set_level (old_interrupt_level); // reset the interrupt level back to its old.
 
         elem_curr = elem_next;
     }
@@ -617,13 +612,13 @@ void thread_sleep (int64_t ticks){
 
     enum intr_level old_interrupt_level;
 
+    old_interrupt_level = intr_disable(); // temporarily turn OFF the interrupt untill the thread is blocked.
+
     struct thread *current_thread = thread_current (); // get the current/calling thread addres
 
     ASSERT (is_thread (current_thread));
 
     current_thread->ticks_sleep = ticks + timer_ticks(); // timer_ticks(); returns the no.of timer-ticks,since OS boot
-
-    old_interrupt_level = intr_disable(); // temporarily turn OFF the interrupt untill the thread is blocked.
 
     /* list_insert_ordered() function is used to insert a current-thread into the sleep_list in ascending order, current
        thread element is iterated over the sleep_list till a suitable insert palce is found  */
@@ -660,7 +655,13 @@ void thread_dequeue (void)
     if (list_empty (&sleep_list)) // check if the sleep_list is empty
         return;
 
+    enum intr_level old_interrupt_level;
+    
+    old_interrupt_level = intr_disable (); // temporarily turn OFF the interrupt untill the thread is unblocked.
+
     thread_foreach(&thread_awake,NULL); // iterate along the sleep_list to dequeue threads if{curr_sleep_ticks <= timer_ticks()}
+
+    intr_set_level (old_interrupt_level); // reset the interrupt level back to its old
 }
 
 /*
