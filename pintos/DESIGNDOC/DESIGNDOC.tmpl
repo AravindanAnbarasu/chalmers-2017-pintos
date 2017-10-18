@@ -1,0 +1,183 @@
+			+--------------------+
+			|    EDA092/DIT400   |
+			| LAB ASSIGNMENT 2:  |
+			| 	THREADS      |
+			|   DESIGN DOCUMENT  |
+			+--------------------+
+				   
+---- GROUP A5 ----
+
+>> Fill in the group number, names and email addresses of your group members.
+
+    1) Lisanu Tebikew Yallew <lisanu@student.chalmers.se>
+    2) Aravindan Anbarasu <anbarasu@student.chalmers.se>
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, please give them here.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+
+    1) http://stuartharrell.com/blog/2016/12/16/efficient-alarm-clock/
+    2) http://www.geeksforgeeks.org/lifecycle-and-states-of-a-thread-in-java/
+    3) http://man7.org/linux/man-pages/man3/pthread_yield.3.html
+    4) https://notes.shichao.io/lkd/ch7/
+    5) https://stackoverflow.com/questions/9427276/what-does-mutex-and-semaphore-actually-do
+    6) https://stackoverflow.com/questions/17252076/multiple-readers-and-multiple-writersi-mean-multiple-synchronization
+
+
+			     ALARM CLOCK
+			     ===========
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+    1) static struct list sleep_list(in thread.c)- a list for tracking sleeping threads.
+
+    2) int64_t ticks_sleep(in thread.h)- a member of struct thread,used to store a
+       particular thread's sleeping time.
+
+---- ALGORITHMS ----
+
+>> A2: Briefly describe what happens in a call to timer_sleep(),
+>> including the effects of the timer interrupt handler.
+
+    tmer_sleep:
+    1) validate ticks argument (i.e,) ticks > 0
+
+    2) Diable the interrupt
+
+    3) Get the current thread running, and update its ticks_sleep value(ticks + timer_ticks)
+
+    4) Insert the current-thread into the sleep_list in ascending order, current thread
+       element is iterated over the sleep_list till a suitable insert palce is found
+
+    5) Block the thread
+
+    6) Reset the interrupt to its old level
+
+    timer_interrupt:
+    1) validate if the sleep_list is empty or not
+
+    2) Disable the interrupt
+
+    3) Iterate along the sleep_list to check if any thread is to be awakened based on
+       the condition if{curr_ticks_sleep <= timer_ticks()}
+
+    4) If the above mentioned condition in step2 is true, dequeue that thread element
+       from the sleep_list
+
+    5) Unblock the thread
+
+    6) Reset the interrupt to its old level
+
+    7) The iteration continues untill ticks_sleep > timer_ticks() for a thread
+
+>> A3: What steps are taken to minimize the amount of time spent in
+>> the timer interrupt handler?
+
+    Since the sleep_list is arranged in an ascending order (i.e,)the thread with lower ticks_sleep
+    value will be at the front of the queue, so the interrupt handler doesnt need to spend time in
+    checking all the thread elements in the sleep_list.
+
+---- SYNCHRONIZATION ----
+
+>> A4: How are race conditions avoided when multiple threads call
+>> timer_sleep() simultaneously?
+
+    As soon as a thread enters the timer_sleep the interrrupt is disabled so that preemption will not happen
+    untill that thread is set to blocked state.
+
+>> A5: How are race conditions avoided when a timer interrupt occurs
+>> during a call to timer_sleep()?
+
+    During a call to the timer_sleep the interrupt is turned off so there is no possiblility for an interrupt
+    handler to operate on sleep_list utill the timer_sleep function completes its modifications over the sleep_list
+    and resets the interrupt.
+
+---- RATIONALE ----
+
+>> A6: Why did you choose this design?  In what ways is it superior to
+>> another design you considered?
+
+    If we maintain a sleep_list in an un-sorted order, then we can save some time spent as we insert the thread element
+    into the slep_list as per the order they arrive, but this will make the interrupt_handler to traververse through
+    the entire sleep_list every time which becomes more complicated when there are many sleeping threads.Thus maintaining
+    a sorted sleep_list design seems much efficient comparitively.
+
+			    BATCH SCHEDULING
+			    ================
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, semaphore, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+    1) size_t reader_ctr = 0; represents the number of readers currently executing
+    2) size_t writer_ctr = 0; represents the number of writers currently executing
+    3) struct lock lock; Lock for the monitor
+    4) struct condition ok_to_write_priority; represents condition variable for high priority writer threads. These threads are woken from sleeping before threads waiting on a normal ok_to_write condition varialbe.
+    5) struct condition ok_to_read_priority; represent condition variables for high priority reader tasks. These threads are woken up before normal ok_to_read condition varialbe
+    6) struct condition ok_to_write; represent the condition variables for normal priority writer tasks
+    7) struct condition ok_to_read; represent the condition variables for normal priority writer tasks
+
+---- SYNCHRONIZATION ----
+
+>> C1: How does your solution guarantee that no more that 3 tasks
+>> are using the bus in the same direction?
+
+Before starting read or write operations, threads check if there are at least 3 reader/writer threads. If that is the case, they sleep on a condition variable, until they are worken up later when the number of threads decreases.
+
+>> C2: What prevents tasks from opposite directions from using the
+>> bus simultaneously?
+
+Before doing read/write, threads check if there are any threads in the oppsite direction. If so, they will sleep on a condition variable until they are worken up later.
+
+>> C3: How does your solution grant priority to high priority tasks over
+>> the waiting tasks in the same direction?
+
+High priority threads sleep on a separate condition variable. When other threads are done executing, they send wakeup signal to higher priority threads before any lower priority threads. Higher priority threads are also created first in batchScheduler method. Therefore, they will have a bit of an advantage to be scheduled first.
+
+>> C4: How do you guarantee that despite having priority, high priority
+>> tasks do not start using the bus while there are still still using
+>> it in the oposite direction?
+
+All tasks (high priority or normal) make sure that the number of threads on the opposite direction is 0 before continuing. If that is not the case, they will wait on a condition variable till other threads wake them up.
+
+---- RATIONALE ----
+
+>> C6: Why did you choose this design? Did you consider other design 
+>> alternatives? In what ways is it superior to another design you considered?
+
+We have decided to use Mesa monitors than using hoare monitors. In mesa monitor, a thread checks the condition that it is waiting on again even when a thread is woken up. The reason is because multiple a threads may be woken up (due to a broadcast by a thread which is done executing) and there is only one space in the bus. After many theads wake up, they check the condition is satisfied again. One of the threads will discover that the condition holds now and continue execution, while others go back to sleep.
+
+			   SURVEY QUESTIONS (optional)
+			   ===========================
+
+Answering these questions is optional, but it will help us improve the
+course in future quarters.  Feel free to tell us anything you
+want--these questions are just to spur your thoughts.  You may also
+choose to respond anonymously in the course evaluations at the end of
+the quarter.
+
+>> In your opinion, was this assignment, or any one of the three problems
+>> in it, too easy or too hard?  Did it take too long or too little time?
+
+>> Did you find that working on a particular part of the assignment gave
+>> you greater insight into some aspect of OS design?
+
+>> Is there some particular fact or hint we should give students in
+>> future quarters to help them solve the problems?  Conversely, did you
+>> find any of our guidance to be misleading?
+
+>> Do you have any suggestions for the TAs to more effectively assist
+>> students, either for future quarters?
+
+>> Any other comments?
+
